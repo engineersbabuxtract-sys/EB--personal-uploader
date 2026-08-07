@@ -1,0 +1,39 @@
+# koyeb.yaml - Koyeb service configuration
+name: engineers-babu-bot
+region: singapore
+type: web
+
+services:
+  - name: bot
+    docker:
+      image: python:3.10-slim
+      command: bash start-koyeb.sh
+    ports:
+      - port: 8080
+        protocol: http
+    env:
+      - key: API_ID
+        value: "21705536"
+      - key: API_HASH
+        value: "c5bb241f6e3ecf33fe68a444e288de2d"
+      - key: BOT_TOKEN
+        value: ""  # Set this in Koyeb dashboard
+      - key: AUTH_USERS
+        value: "1147534909,5957208798"
+      - key: WEBHOOK
+        value: "false"
+      - key: PORT
+        value: "8080"
+      - key: COOKIES_FILE_PATH
+        value: "/app/cookies/youtube_cookies.txt"
+    health_check:
+      path: /health
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      initial_delay: 60s
+    scaling:
+      min: 1
+      max: 1
+    instance_types:
+      - micro
