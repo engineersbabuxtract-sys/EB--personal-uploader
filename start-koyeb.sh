@@ -1,12 +1,12 @@
 #!/bin/bash
-# start-koyeb.sh - Koyeb optimized startup
+# start-koyeb.sh - Koyeb optimized startup script
 
 echo "🚀 Starting Engineers Babu Uploader Bot on Koyeb..."
 
 # Set cookie file path
 export COOKIES_FILE_PATH="/app/cookies/youtube_cookies.txt"
 
-# Check if cookies file exists
+# Create cookie file if not exists
 if [ ! -f "$COOKIES_FILE_PATH" ]; then
     echo "⚠️  YouTube cookies file not found. Creating empty file..."
     touch "$COOKIES_FILE_PATH"
@@ -15,6 +15,7 @@ fi
 # Check environment variables
 if [ -z "$BOT_TOKEN" ]; then
     echo "❌ ERROR: BOT_TOKEN is not set!"
+    echo "Please set BOT_TOKEN in Koyeb environment variables"
     exit 1
 fi
 
@@ -26,7 +27,8 @@ fi
 echo "✅ Environment variables loaded successfully"
 echo "🔑 API_ID: $API_ID"
 echo "🤖 BOT_TOKEN: ${BOT_TOKEN:0:10}..."
+echo "👤 AUTH_USERS: $AUTH_USERS"
 
 # Start the application
-echo "🔄 Starting bot..."
+echo "🔄 Starting bot with gunicorn + python..."
 exec gunicorn app:app --bind 0.0.0.0:8080 --workers 2 --threads 4 --daemon && python3 main.py
