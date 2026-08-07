@@ -1,4 +1,4 @@
-# main.py - Clean, modular rewrite
+# main.py - Complete Koyeb-optimized bot
 import os
 import re
 import sys
@@ -23,8 +23,9 @@ from pyrogram.errors import FloodWait
 from pyromod import listen
 from aiohttp import web
 
-from vars import API_ID, API_HASH, BOT_TOKEN
+from vars import API_ID, API_HASH, BOT_TOKEN, AUTH_USERS
 from utils import progress_bar, hrb
+from logs import logging
 import core as helper
 
 # ===================== CONFIGURATION =====================
@@ -36,30 +37,26 @@ class Config:
     APPX_PHOTO: str = "https://i.postimg.cc/Y0tt8SX3/appzip.webp"
     BOT_NAME: str = "𝕰𝖓𝖌𝖎𝖓𝖊𝖊𝖗𝖘 𝕭𝖆𝖇𝖚"
     CHANNEL_ID: str = "-1002257755789"
-    COOKIES_FILE: str = os.getenv("COOKIES_FILE_PATH", "youtube_cookies.txt")
-    WEBHOOK: bool = os.getenv("WEBHOOK", False)
+    COOKIES_FILE: str = os.getenv("COOKIES_FILE_PATH", "/app/cookies/youtube_cookies.txt")
+    WEBHOOK: bool = os.getenv("WEBHOOK", "false").lower() == "true"
     PORT: int = int(os.getenv("PORT", 8080))
     
     # Default credentials
     DEFAULT_CREDIT: str = "𝕰𝖓𝖌𝖎𝖓𝖊𝖊𝖗𝖘 𝕭𝖆𝖇𝖚™"
     DEFAULT_TOKEN: str = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3MzYxNTE3MzAuMTI2LCJkYXRhIjp7Il9pZCI6IjYzMDRjMmY3Yzc5NjBlMDAxODAwNDQ4NyIsInVzZXJuYW1lIjoiNzc2MTAxNzc3MCIsImZpcnN0TmFtZSI6IkplZXYgbmFyYXlhbiIsImxhc3ROYW1lIjoic2FoIiwib3JnYW5pemF0aW9uIjp7Il9pZCI6IjVlYjM5M2VlOTVmYWI3NDY4YTc5ZDE4OSIsIndlYnNpdGUiOiJwaHlzaWNzd2FsbGFoLmNvbSIsIm5hbWUiOiJQaHlzaWNzd2FsbGFoIn0sImVtYWlsIjoiV1dXLkpFRVZOQVJBWUFOU0FIQEdNQUlMLkNPTSIsInJvbGVzIjpbIjViMjdiZDk2NTg0MmY5NTBhNzc4YzZlZiJdLCJjb3VudHJ5R3JvdXAiOiJJTiIsInR5cGUiOiJVU0VSIn0sImlhdCI6MTczNTU0NjkzMH0.iImf90mFu_cI-xINBv4t0jVz-rWK1zeXOIwIFvkrS0M"
-
+    
+    # Authorized users
+    AUTH_USERS: List[int] = [int(x.strip()) for x in AUTH_USERS.split(",")] if AUTH_USERS else []
 
 config = Config()
-
-# ===================== LOGGING =====================
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-)
-logger = logging.getLogger(__name__)
 
 # ===================== BOT INITIALIZATION =====================
 bot = Client(
     "bot",
     api_id=API_ID,
     api_hash=API_HASH,
-    bot_token=BOT_TOKEN
+    bot_token=BOT_TOKEN,
+    workers=4
 )
 
 # ===================== UTILITY CLASSES =====================
@@ -103,18 +100,25 @@ class URLProcessor:
     
     @classmethod
     def process(cls, url: str, resolution: str, token: str = None) -> Tuple[str, str]:
-        """
-        Process URL based on platform and return (processed_url, format_string)
-        """
+        """Process URL based on platform"""
         original_url = url
         url = cls.clean_url(url)
         
+        # Visionias special handling
+        if "visionias" in url:
+            return url, None
+            
         # Classplus DRM
         if "classplusapp.com/drm/" in url:
-            url = 'https://dragoapi.vercel.app/classplus?link=' + url
-            # mpd, keys = helper.get_mps_and_keys(url)  # Requires implementation
-            # return mpd, f"b[height<={resolution}]"
-            
+            try:
+                response = requests.get(f"https://dragoapi.vercel.app/classplus?link={url}")
+                if response.status_code == 200:
+                    data = response.json()
+                    return data.get('mpd', url), cls.get_default_format(resolution)
+            except:
+                pass
+            return url, cls.get_default_format(resolution)
+        
         # Classplus video
         if any(domain in url for domain in [
             "videos.classplusapp", "tencdn.classplusapp", "webvideos.classplusapp.com",
@@ -124,11 +128,13 @@ class URLProcessor:
             try:
                 response = requests.get(
                     f'https://api.classplusapp.com/cams/uploader/video/jw-signed-url?url={url}',
-                    headers={'x-access-token': 'eyJjb3Vyc2VJZCI6IjQ1NjY4NyIsInR1dG9ySWQiOm51bGwsIm9yZ0lkIjo0ODA2MTksImNhdGVnb3J5SWQiOm51bGx9r'}
+                    headers={'x-access-token': 'eyJjb3Vyc2VJZCI6IjQ1NjY4NyIsInR1dG9ySWQiOm51bGwsIm9yZ0lkIjo0ODA2MTksImNhdGVnb3J5SWQiOm51bGx9r'},
+                    timeout=10
                 )
-                url = response.json()['url']
+                if response.status_code == 200:
+                    url = response.json()['url']
             except Exception as e:
-                logger.error(f"Classplus processing error: {e}")
+                logging.error(f"Classplus processing error: {e}")
         
         # Utkarsh app
         if "apps-s3-jw-prod.utkarshapp.com" in url:
@@ -136,24 +142,30 @@ class URLProcessor:
                 url = url.replace(url.split("/")[-1], Resolution.get(resolution) + '.mp4')
             elif '.m3u8' in url:
                 try:
-                    m3u8_data = m3u8.loads(requests.get(url).text)
+                    m3u8_data = m3u8.loads(requests.get(url, timeout=10).text)
                     if m3u8_data.data.get('playlists'):
                         q = m3u8_data.data['playlists'][1]['uri'].split("/")[0]
                         x = url.split("/")[5]
                         x = url.replace(x, "")
                         url = m3u8_data.data['playlists'][1]['uri'].replace(q + "/", x)
                 except Exception as e:
-                    logger.error(f"M3U8 processing error: {e}")
+                    logging.error(f"M3U8 processing error: {e}")
         
         # PW Live
         if "sec-prod-mediacdn.pw.live" in url:
             vid_id = url.split("sec-prod-mediacdn.pw.live/")[1].split("/")[0]
-            url = f"https://pwplayer-0e2dbbdc0989.herokuapp.com/player?url=https://d1d34p8vz63oiq.cloudfront.net/{vid_id}/master.mpd?token={token}"
+            url = f"https://pwplayer-0e2dbbdc0989.herokuapp.com/player?url=https://d1d34p8vz63oiq.cloudfront.net/{vid_id}/master.mpd?token={token or config.DEFAULT_TOKEN}"
+        
+        # D1D34P8VZ63OIQ
+        if "d1d34p8vz63oiq" in url or "sec1.pw.live" in url:
+            vid_id = url.split('/')[-2]
+            url = f"https://pwplayer-38c1ae95b681.herokuapp.com/pw?url={url}&token={token or config.DEFAULT_TOKEN}"
         
         # YouTube embed
         if '?list' in url:
-            video_id = url.split("/embed/")[1].split("?")[0]
-            url = f"https://www.youtube.com/embed/{video_id}"
+            video_id = url.split("/embed/")[1].split("?")[0] if "/embed/" in url else None
+            if video_id:
+                url = f"https://www.youtube.com/embed/{video_id}"
         
         # BitGravity to Akamai
         if 'bitgravity.com' in url:
@@ -162,37 +174,34 @@ class URLProcessor:
                 url = f"https://kgs-v2.akamaized.net/{parts[3]}/{parts[4]}/{parts[5]}/{parts[6]}"
         
         # KGS PDF
-        if '/do' in url:
+        if '/do' in url and '.pdf' in url:
             pdf_id = url.split("/")[-1].split(".pdf")[0]
             url = f"https://kgs-v2.akamaized.net/kgs/do/pdfs/{pdf_id}.pdf"
         
         # Cloudflare workers
         if 'workers.dev' in url:
             vid_id = url.split("cloudfront.net/")[1].split("/")[0]
-            url = f"https://madxapi-d0cbf6ac738c.herokuapp.com/{vid_id}/master.m3u8?token={token}"
+            url = f"https://madxapi-d0cbf6ac738c.herokuapp.com/{vid_id}/master.m3u8?token={token or config.DEFAULT_TOKEN}"
         
         # Psi Offers
         if 'psitoffers.store' in url:
-            vid_id = url.split("vid=")[1].split("&")[0]
-            url = f"https://madxapi-d0cbf6ac738c.herokuapp.com/{vid_id}/master.m3u8?token={token}"
-        
-        # PW Player
-        if "d1d34p8vz63oiq" in url or "sec1.pw.live" in url:
-            vid_id = url.split('/')[-2]
-            url = f"https://pwplayer-38c1ae95b681.herokuapp.com/pw?url={url}&token={token}"
+            vid_id = url.split("vid=")[1].split("&")[0] if "vid=" in url else None
+            if vid_id:
+                url = f"https://madxapi-d0cbf6ac738c.herokuapp.com/{vid_id}/master.m3u8?token={token or config.DEFAULT_TOKEN}"
         
         # Allen Plus / Vimeo
         if "allenplus" in url or "player.vimeo" in url:
             if "controller/videoplay" in url:
-                video_code = url.split("videocode=")[1].split("&videohash=")[0]
-                url0 = f"https://player.vimeo.com/video/{video_code}"
-                url = f"https://master-api-v3.vercel.app/allenplus-vimeo?url={url0}&authorization=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VyX2lkIjoiNzkxOTMzNDE5NSIsInRnX3VzZXJuYW1lIjoi4p61IFtvZmZsaW5lXSIsImlhdCI6MTczODY5MjA3N30.SXzZ1MZcvMp5sGESj0hBKSghhxJ3k1GTWoBUbivUe1I"
+                video_code = url.split("videocode=")[1].split("&videohash=")[0] if "videocode=" in url else None
+                if video_code:
+                    url0 = f"https://player.vimeo.com/video/{video_code}"
+                    url = f"https://master-api-v3.vercel.app/allenplus-vimeo?url={url0}&authorization=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VyX2lkIjoiNzkxOTMzNDE5NSIsInRnX3VzZXJuYW1lIjoi4p61IFtvZmZsaW5lXSIsImlhdCI6MTczODY5MjA3N30.SXzZ1MZcvMp5sGESj0hBKSghhxJ3k1GTWoBUbivUe1I"
             else:
                 url = f"https://master-api-v3.vercel.app/allenplus-vimeo?url={url}&authorization=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VyX2lkIjoiNzkxOTMzNDE5NSIsInRnX3VzZXJuYW1lIjoi4p61IFtvZmZsaW5lXSIsImlhdCI6MTczODY5MjA3N30.SXzZ1MZcvMp5sGESj0hBKSghhxJ3k1GTWoBUbivUe1I"
         
         # Amazon AWS
         if 'amazonaws.com' in url:
-            url = f"https://master-api-v3.vercel.app/adda-mp4-m3u8?url={url}&quality={resolution}&token={token}"
+            url = f"https://master-api-v3.vercel.app/adda-mp4-m3u8?url={url}&quality={resolution}&token={token or config.DEFAULT_TOKEN}"
         
         # Brightcove
         if "edge.api.brightcove.com" in url:
@@ -209,11 +218,7 @@ class URLProcessor:
         
         # AppX recordings (FFmpeg direct)
         if "appx-recordings-mcdn.akamai.net.in/drm/" in url or "arvind" in url:
-            return url, None  # Will use FFmpeg directly
-        
-        # Visionias
-        if "visionias" in url:
-            return url, None  # Handled separately
+            return url, None
         
         # Determine format
         if "youtu" in url:
@@ -370,17 +375,16 @@ class DownloadHandler:
     async def download_and_send(self, url: str, title: str, index: int, batch: str, 
                                 credit: str, resolution: str, token: str, thumb: str,
                                 message: Message) -> bool:
-        """
-        Main download and send handler
-        """
+        """Main download and send handler"""
         url_type = URLClassifier.classify(url)
         name = self._generate_filename(title, index)
         
         # Process URL based on type
         processed_url, fmt = URLProcessor.process(url, resolution, token)
+        final_url = processed_url or url
         
         # Determine download command
-        cmd = self._build_command(processed_url or url, name, fmt, resolution, url_type)
+        cmd = self._build_command(final_url, name, fmt, resolution, url_type)
         
         # Handle by type
         handlers = {
@@ -395,7 +399,7 @@ class DownloadHandler:
         }
         
         handler = handlers.get(url_type, self._handle_video)
-        return await handler(processed_url or url, name, title, index, batch, credit, 
+        return await handler(final_url, name, title, index, batch, credit, 
                            resolution, token, thumb, message, cmd)
     
     def _generate_filename(self, title: str, index: int) -> str:
@@ -407,19 +411,30 @@ class DownloadHandler:
         return f'{str(index).zfill(3)}) {clean[:60]} {config.BOT_NAME}'
     
     def _build_command(self, url: str, name: str, fmt: str, resolution: str, 
-                       url_type: URLType) -> str:
+                       url_type: URLType) -> Optional[str]:
         """Build yt-dlp command"""
+        # Special FFmpeg cases
+        if "appx-recordings-mcdn.akamai.net.in/drm/" in url or "arvind" in url:
+            return f'ffmpeg -i "{url}" -c copy -bsf:a aac_adtstoasc "{name}.mp4"'
+        
+        # Acecwply
+        if "acecwply" in url:
+            return f'yt-dlp -o "{name}.%(ext)s" -f "bestvideo[height<={resolution}]+bestaudio" --hls-prefer-ffmpeg --no-keep-video --remux-video mkv --no-warning "{url}"'
+        
+        # JW Prod
+        if "jw-prod" in url:
+            return f'yt-dlp -o "{name}.mp4" "{url}"'
+        
+        # YouTube
         if url_type == URLType.YOUTUBE:
             return f'yt-dlp --cookies {config.COOKIES_FILE} -f "{fmt}" "{url}" -o "{name}".mp4'
-        elif url_type == URLType.CLASS_PLUS:
-            return f'yt-dlp -f "{fmt}" "{url}" -o "{name}.mp4"'
-        elif ".ws" in url:
-            return None  # HTML download handled separately
-        else:
-            # Check for special FFmpeg cases
-            if "appx-recordings-mcdn.akamai.net.in/drm/" in url or "arvind" in url:
-                return f'ffmpeg -i "{url}" -c copy -bsf:a aac_adtstoasc "{name}.mp4"'
-            return f'yt-dlp -f "{fmt}" "{url}" -o "{name}.mp4"'
+        
+        # ClassPlus
+        if url_type == URLType.CLASS_PLUS:
+            return f'yt-dlp --add-header "referer:https://web.classplusapp.com/" --add-header "x-cdn-tag:empty" -f "{fmt}" "{url}" -o "{name}.mp4"'
+        
+        # Default
+        return f'yt-dlp -f "{fmt}" "{url}" -o "{name}.mp4"'
     
     async def _handle_drive(self, url: str, name: str, title: str, index: int, 
                            batch: str, credit: str, resolution: str, token: str,
@@ -435,26 +450,20 @@ class DownloadHandler:
             await message.reply_text(str(e))
             time.sleep(e.x)
             return False
+        except Exception as e:
+            logging.error(f"Drive download error: {e}")
+            await message.reply_text(f"Drive download error: {e}")
+            return False
     
     async def _handle_pdf(self, url: str, name: str, title: str, index: int,
                          batch: str, credit: str, resolution: str, token: str,
                          thumb: str, message: Message, cmd: str) -> bool:
         """Handle PDF downloads"""
         try:
-            # Try yt-dlp first
-            if cmd:
-                subprocess.run(cmd, shell=True)
-                pdf_file = f'{name}.pdf'
-                if os.path.exists(pdf_file):
-                    caption = CaptionBuilder.pdf_caption(index, title, batch, credit)
-                    await self.bot.send_document(chat_id=message.chat.id, document=pdf_file, caption=caption)
-                    os.remove(pdf_file)
-                    return True
-            
-            # Fallback to cloudscraper
+            # Try cloudscraper first
             url = url.replace(" ", "%20")
             scraper = cloudscraper.create_scraper()
-            response = scraper.get(url)
+            response = scraper.get(url, timeout=30)
             
             if response.status_code == 200:
                 pdf_file = f'{name}.pdf'
@@ -466,10 +475,20 @@ class DownloadHandler:
                 os.remove(pdf_file)
                 return True
             else:
+                # Fallback to yt-dlp
+                if cmd:
+                    subprocess.run(cmd, shell=True, timeout=300)
+                    pdf_file = f'{name}.pdf'
+                    if os.path.exists(pdf_file):
+                        caption = CaptionBuilder.pdf_caption(index, title, batch, credit)
+                        await self.bot.send_document(chat_id=message.chat.id, document=pdf_file, caption=caption)
+                        os.remove(pdf_file)
+                        return True
+                
                 await message.reply_text(f"Failed to download PDF: {response.status_code}")
                 return False
         except Exception as e:
-            logger.error(f"PDF download error: {e}")
+            logging.error(f"PDF download error: {e}")
             await message.reply_text(f"PDF download error: {e}")
             return False
     
@@ -479,15 +498,17 @@ class DownloadHandler:
         """Handle image downloads"""
         try:
             ext = url.split('.')[-1].split('?')[0]
-            cmd = f'yt-dlp -o "{name}.{ext}" "{url}"'
-            subprocess.run(f"{cmd} -R 25 --fragment-retries 25", shell=True)
+            download_cmd = f'yt-dlp -o "{name}.{ext}" "{url}"'
+            subprocess.run(f"{download_cmd} -R 25 --fragment-retries 25", shell=True, timeout=60)
             
-            caption = CaptionBuilder.image_caption(index, title, ext, batch, credit)
-            await self.bot.send_document(chat_id=message.chat.id, document=f'{name}.{ext}', caption=caption)
-            os.remove(f'{name}.{ext}')
-            return True
+            if os.path.exists(f'{name}.{ext}'):
+                caption = CaptionBuilder.image_caption(index, title, ext, batch, credit)
+                await self.bot.send_document(chat_id=message.chat.id, document=f'{name}.{ext}', caption=caption)
+                os.remove(f'{name}.{ext}')
+                return True
+            return False
         except Exception as e:
-            logger.error(f"Image download error: {e}")
+            logging.error(f"Image download error: {e}")
             await message.reply_text(f"Image download error: {e}")
             return False
     
@@ -497,15 +518,17 @@ class DownloadHandler:
         """Handle audio downloads"""
         try:
             ext = url.split('.')[-1].split('?')[0]
-            cmd = f'yt-dlp -x --audio-format {ext} -o "{name}.{ext}" "{url}"'
-            subprocess.run(f"{cmd} -R 25 --fragment-retries 25", shell=True)
+            download_cmd = f'yt-dlp -x --audio-format {ext} -o "{name}.{ext}" "{url}"'
+            subprocess.run(f"{download_cmd} -R 25 --fragment-retries 25", shell=True, timeout=120)
             
-            caption = CaptionBuilder.audio_caption(index, title, ext, batch, credit)
-            await self.bot.send_document(chat_id=message.chat.id, document=f'{name}.{ext}', caption=caption)
-            os.remove(f'{name}.{ext}')
-            return True
+            if os.path.exists(f'{name}.{ext}'):
+                caption = CaptionBuilder.audio_caption(index, title, ext, batch, credit)
+                await self.bot.send_document(chat_id=message.chat.id, document=f'{name}.{ext}', caption=caption)
+                os.remove(f'{name}.{ext}')
+                return True
+            return False
         except Exception as e:
-            logger.error(f"Audio download error: {e}")
+            logging.error(f"Audio download error: {e}")
             await message.reply_text(f"Audio download error: {e}")
             return False
     
@@ -518,7 +541,7 @@ class DownloadHandler:
             await self.bot.send_photo(chat_id=message.chat.id, photo=config.APPX_PHOTO, caption=caption)
             return True
         except Exception as e:
-            logger.error(f"ZIP handling error: {e}")
+            logging.error(f"ZIP handling error: {e}")
             await message.reply_text(str(e))
             return False
     
@@ -531,7 +554,7 @@ class DownloadHandler:
             await self.bot.send_photo(chat_id=message.chat.id, photo=config.PHOTO_URL, caption=caption)
             return True
         except Exception as e:
-            logger.error(f"YouTube handling error: {e}")
+            logging.error(f"YouTube handling error: {e}")
             await message.reply_text(str(e))
             return False
     
@@ -544,7 +567,7 @@ class DownloadHandler:
             await self.bot.send_photo(chat_id=message.chat.id, photo=config.CP_PHOTO, caption=caption)
             return True
         except Exception as e:
-            logger.error(f"ClassPlus handling error: {e}")
+            logging.error(f"ClassPlus handling error: {e}")
             await message.reply_text(str(e))
             return False
     
@@ -563,8 +586,6 @@ class DownloadHandler:
 
 ⌨ Quality » {resolution}
 
-**🔗 URL »** `{url}`
-
 **Bot Made By ✦ {config.BOT_NAME}**"""
             prog = await message.reply_text(show)
             
@@ -578,7 +599,7 @@ class DownloadHandler:
             return True
             
         except Exception as e:
-            logger.error(f"Video download error: {e}")
+            logging.error(f"Video download error: {e}")
             await message.reply_text(
                 f"⌘ Downloading Interrupted ❌ \n\n⌘ Name » {name}\n⌘ Link » `{url}`"
             )
@@ -594,13 +615,24 @@ class BotCommands:
     
     async def start_command(self, client: Client, message: Message):
         """Handle /start command"""
-        user = message.from_user.mention
+        user = message.from_user.mention if message.from_user else "User"
         start_text = f"""🌟 Welcome {user}! 🌟
 
 I am a powerful TXT Downloader Bot.
 Send me a TXT file containing links and I'll download them for you.
 
 **Bot Made BY {config.BOT_NAME}™👨🏻‍💻**
+
+Commands:
+/start - Start the bot
+/stop - Stop the bot
+/Enger - Start download process
+/radha - Alternate download handler
+/anu - Alternate download handler
+/ankit1 - M3U8 download handler
+/alpha - Advanced download handler
+
+**Copyright ©️ {config.BOT_NAME}**
 """
         await message.reply_text(start_text)
     
@@ -608,12 +640,10 @@ Send me a TXT file containing links and I'll download them for you.
         """Handle /stop command"""
         await message.delete()
         await message.reply_text("**STOPPED** 🛑", True)
-        os.execl(sys.executable, sys.executable, *sys.argv)
+        os._exit(0)
     
     async def process_txt_handler(self, client: Client, message: Message, credit: str = None):
-        """
-        Main TXT file processing handler
-        """
+        """Main TXT file processing handler"""
         credit = credit or config.DEFAULT_CREDIT
         
         editable = await message.reply_text("**📁 Send me the TXT file and wait.**")
@@ -666,10 +696,9 @@ Send me a TXT file containing links and I'll download them for you.
         await editable.delete()
         
         # Process links
-        count = 1
+        count = start_index
         for i in range(start_index - 1, len(links)):
             link = links[i]
-            # Store total for progress display
             message._total_links = len(links)
             
             url = "https://" + link[1] if "://" not in link[1] else link[1]
@@ -689,7 +718,7 @@ Send me a TXT file containing links and I'll download them for you.
         """Parse TXT file and extract links"""
         links = []
         try:
-            with open(file_path, "r") as f:
+            with open(file_path, "r", encoding="utf-8") as f:
                 content = f.read()
             
             for line in content.split("\n"):
@@ -698,20 +727,20 @@ Send me a TXT file containing links and I'll download them for you.
                     continue
                     
                 if "://" in line:
-                    # Check if line has a title before the URL
                     parts = line.split("://", 1)
                     if len(parts) == 2:
-                        # If it starts with a number or has colon, it might be titled
-                        if parts[0].strip() and not parts[0].strip().isdigit():
-                            links.append((parts[0].strip(), parts[1].strip()))
-                        else:
-                            links.append((parts[1].strip(), parts[1].strip()))
+                        title = parts[0].strip()
+                        url = parts[1].strip()
+                        # If title is just a number or empty, use URL as title
+                        if not title or title.isdigit():
+                            title = url
+                        links.append((title, url))
                     else:
                         links.append((line, line))
                 else:
                     links.append((line, line))
         except Exception as e:
-            logger.error(f"Error parsing TXT: {e}")
+            logging.error(f"Error parsing TXT: {e}")
             return []
         return links
     
@@ -728,31 +757,38 @@ Send me a TXT file containing links and I'll download them for you.
             return "no"
         
         if thumb_input.startswith(("http://", "https://")):
-            subprocess.getstatusoutput(f"wget '{thumb_input}' -O 'thumb.jpg'")
-            return "thumb.jpg"
+            try:
+                subprocess.getstatusoutput(f"wget '{thumb_input}' -O 'thumb.jpg'")
+                return "thumb.jpg"
+            except:
+                return "no"
         
         return "no"
 
-# ===================== WEB SERVER =====================
-routes = web.RouteTableDef()
-
-@routes.get("/", allow_head=True)
-async def root_route_handler(request):
-    return web.json_response({"status": "running", "bot": config.BOT_NAME})
-
-async def web_server():
-    web_app = web.Application(client_max_size=30000000)
-    web_app.add_routes(routes)
-    return web_app
+# ===================== AUTH DECORATOR =====================
+def authorized_only(func):
+    """Decorator to check if user is authorized"""
+    async def wrapper(client, message):
+        if not config.AUTH_USERS:
+            return await func(client, message)
+        
+        user_id = message.from_user.id if message.from_user else None
+        if user_id in config.AUTH_USERS:
+            return await func(client, message)
+        else:
+            await message.reply_text("❌ You are not authorized to use this bot.")
+    return wrapper
 
 # ===================== BOT SETUP =====================
 async def start_bot():
     await bot.start()
-    logger.info("Bot started successfully")
+    logging.info("✅ Bot started successfully")
+    logging.info(f"🤖 Bot username: @{bot.me.username}")
+    logging.info(f"📊 Authorized users: {config.AUTH_USERS}")
 
 async def stop_bot():
     await bot.stop()
-    logger.info("Bot stopped")
+    logging.info("Bot stopped")
 
 async def main():
     # Register command handlers
@@ -767,32 +803,29 @@ async def main():
         await commands.stop_command(client, message)
     
     @bot.on_message(filters.command(["Enger", "ghyig"]))
+    @authorized_only
     async def enger_handler(client, message):
         await commands.process_txt_handler(client, message, config.DEFAULT_CREDIT)
     
     @bot.on_message(filters.command(["radha"]))
+    @authorized_only
     async def radha_handler(client, message):
         await commands.process_txt_handler(client, message, "𝐀𝐍𝐊𝐈𝐓 𝐒𝐇𝐀𝐊𝐘𝐀™🇮🇳")
     
     @bot.on_message(filters.command(["anu"]))
+    @authorized_only
     async def anu_handler(client, message):
         await commands.process_txt_handler(client, message, "𝐀𝐍𝐊𝐈𝐓 𝐒𝐇𝐀𝐊𝐘𝐀™🇮🇳")
     
     @bot.on_message(filters.command(["ankit1"]))
+    @authorized_only
     async def ankit1_handler(client, message):
         await commands.process_txt_handler(client, message, "𝐀𝐍𝐊𝐈𝐓 𝐒𝐇𝐀𝐊𝐘𝐀™🇮🇳")
     
     @bot.on_message(filters.command(["alpha"]))
+    @authorized_only
     async def alpha_handler(client, message):
         await commands.process_txt_handler(client, message, "𝐀𝐍𝐊𝐈𝐓 𝐒𝐇𝐀𝐊𝐘𝐀™🇮🇳")
-    
-    # Start web server if WEBHOOK is enabled
-    if config.WEBHOOK:
-        app_runner = web.AppRunner(await web_server())
-        await app_runner.setup()
-        site = web.TCPSite(app_runner, "0.0.0.0", config.PORT)
-        await site.start()
-        logger.info(f"Web server started on port {config.PORT}")
     
     # Start bot
     await start_bot()
@@ -804,6 +837,8 @@ async def main():
     except (KeyboardInterrupt, SystemExit):
         await stop_bot()
 
-# ===================== ENTRY POINT =====================
 if __name__ == "__main__":
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        logging.info("Bot stopped by user")
