@@ -1,4 +1,4 @@
-# Dockerfile.koyeb
+# Dockerfile.koyeb - Koyeb optimized Dockerfile
 FROM python:3.10-slim
 
 # Set working directory
@@ -27,6 +27,7 @@ RUN mkdir -p /app/downloads /app/cookies /app/logs
 ENV PYTHONUNBUFFERED=1
 ENV WEBHOOK=false
 ENV PORT=8080
+ENV COOKIES_FILE_PATH=/app/cookies/youtube_cookies.txt
 
 # Expose port
 EXPOSE 8080
