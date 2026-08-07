@@ -1,0 +1,33 @@
+// app.json - Heroku deployment configuration
+{
+    "name": "Engineers Babu Uploader",
+    "description": "Telegram Bot for downloading videos from TXT links",
+    "repository": "https://github.com/",
+    "keywords": ["telegram bot", "pyrogram", "yt-dlp"],
+    "env": {
+        "API_ID": {
+            "description": "Get your telegram API ID from https://my.telegram.org",
+            "value": "21705536"
+        },
+        "API_HASH": {
+            "description": "Get your telegram API HASH from https://my.telegram.org",
+            "value": "c5bb241f6e3ecf33fe68a444e288de2d"
+        },
+        "BOT_TOKEN": {
+            "description": "Get from BotFather",
+            "value": ""
+        },
+        "AUTH_USERS": {
+            "description": "Admin/Owner/Friends ID separated by ',' Ex: 44578878,8878899",
+            "value": "1147534909,5957208798"
+        },
+        "WEBHOOK": {
+            "description": "Enable webhook mode",
+            "value": "false"
+        },
+        "PORT": {
+            "description": "Port for web server",
+            "value": "8080"
+        }
+    }
+}
