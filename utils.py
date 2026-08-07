@@ -1,6 +1,5 @@
 # utils.py - Utility functions
 import time
-import math
 from datetime import timedelta
 from pyrogram.errors import FloodWait
 
